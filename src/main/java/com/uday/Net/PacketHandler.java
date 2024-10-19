@@ -8,7 +8,8 @@ public class PacketHandler {
         System.arraycopy(tempPacket, 1, packet, 0, packet.length);
         switch (packetType) {
             case 0:
-                // handle connection packet
+                System.out.println("Received packet type 0 from " + senderUsername);
+                System.out.println("Packet data: " + new String(packet));
                 break;
             case 1:
                 // handle Text packet

@@ -1,5 +1,10 @@
 package com.uday.Net;
 
+import com.uday.Encryption.AESEncryption;
+import com.uday.Encryption.EncryptedDataInputStream;
+import com.uday.Encryption.EncryptedDataOutputStream;
+
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -7,17 +12,21 @@ import java.net.Socket;
 
 public class ClientHandler implements Runnable {
 
-    private Socket clientSocket;
+    private final Socket clientSocket;
 
-    private DataInputStream dis;
-    private DataOutputStream dos;
+    private final DataInputStream dis;
+    private final DataOutputStream dos;
+    private final EncryptedDataInputStream eDis;
+    private final EncryptedDataOutputStream eDos;
     public String clientIP;
     public String clientUserName;
 
     public ClientHandler(Socket clientSocket) throws IOException {
         this.clientSocket = clientSocket;
         dis = new DataInputStream(clientSocket.getInputStream());
+        eDis = new EncryptedDataInputStream(dis);
         dos = new DataOutputStream(clientSocket.getOutputStream());
+        eDos = new EncryptedDataOutputStream(dos);
         clientIP = clientSocket.getInetAddress().getHostAddress();
         System.out.println("New client connected: " + clientIP);
     }
@@ -25,18 +34,18 @@ public class ClientHandler implements Runnable {
     @Override
     public void run() {
         try {
-            clientUserName = dis.readUTF();
+            clientUserName = eDis.readUTF();
             if (Server.clients.containsKey(clientUserName)) {
-                dos.writeUTF("Username already taken");
+                eDos.writeUTF("Username already taken");
                 clientSocket.close();
                 return;
             }
-            dos.writeUTF("Username set");
+            eDos.writeUTF("Username set");
             System.out.println("Sent username set confirmation to " + clientIP);
-            if (Server.serverPassword.equals(dis.readUTF())) {
-                dos.writeUTF("Password correct");
+            if (Server.serverPassword.equals(eDis.readUTF())) {
+                eDos.writeUTF("Password correct");
             } else {
-                dos.writeUTF("Password incorrect");
+                eDos.writeUTF("Password incorrect");
                 clientSocket.close();
                 return;
             }
@@ -58,22 +67,37 @@ public class ClientHandler implements Runnable {
     }
 
 
-    private void receivePacket() {
+    public void receivePacket() {
         try {
-            int byteSize = dis.readInt();
-            byte[] packet = new byte[byteSize];
-            dis.readNBytes(packet, 0, byteSize);
-            PacketHandler.handlePacket(clientUserName, packet);
-        } catch (IOException e) {
+            int totalChunks = dis.readInt(); // Read the number of chunks
+            System.out.println("Received packet with " + totalChunks + " chunks");
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+
+            for (int i = 0; i < totalChunks; i++) {
+                int length = dis.readInt(); // Read the length of the current chunk
+                byte[] chunk = dis.readNBytes(length); // Read the chunk
+                buffer.write(chunk); // Write the chunk to the buffer
+            }
+            PacketHandler.handlePacket(clientUserName,AESEncryption.decrypt(buffer.toByteArray())); // Handle the complete packet
+        } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
     public void sendPacket(byte[] packet) {
         try {
-            dos.writeInt(packet.length);
-            dos.write(packet);
-        } catch (IOException e) {
+            int chunkSize = 1024; // Define a reasonable chunk size
+            int totalChunks = (int) Math.ceil((double) packet.length / chunkSize);
+            dos.writeInt(totalChunks); // Send the number of chunks
+            packet = AESEncryption.encrypt(packet);
+
+            for (int i = 0; i < totalChunks; i++) {
+                int start = i * chunkSize;
+                int length = Math.min(chunkSize, packet.length - start);
+                dos.writeInt(length); // Send the length of the current chunk
+                dos.write(packet, start, length); // Send the chunk
+            }
+        } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
